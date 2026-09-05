@@ -22,8 +22,8 @@ scan every chest.
 
 ## Physical Layout
 
-- The storage computer's left peripheral is the inbox barrel.
-- The storage computer's right peripheral is the outbox barrel.
+- The inbox barrel is the wired peripheral `minecraft:barrel_0`.
+- The outbox barrel is the wired peripheral `minecraft:barrel_1`.
 - Storage-pool inventories are registered chest peripherals connected to the
   computer through a wired modem network.
 - Inbox and outbox are never registered as pool inventories.

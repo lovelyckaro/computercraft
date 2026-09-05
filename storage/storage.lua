@@ -1,6 +1,8 @@
 local storage = {}
 
 local INDEX_VERSION = 1
+local INBOX_NAME = "minecraft:barrel_0"
+local OUTBOX_NAME = "minecraft:barrel_1"
 local programDirectory = fs.getDir(shell.getRunningProgram())
 local indexPath = fs.combine(programDirectory, "index")
 local backupPath = indexPath .. ".bak"
@@ -12,6 +14,42 @@ end
 
 function storage.itemKey(item)
   return item.name .. "#" .. (item.nbt or "")
+end
+
+function storage.slotRecord(item, detail, count)
+  return {
+    key = storage.itemKey(item),
+    name = item.name,
+    nbt = item.nbt,
+    displayName = detail.displayName,
+    count = count or item.count,
+    maxCount = detail.maxCount,
+  }
+end
+
+local function roleInventory(name, label)
+  if not peripheral.isPresent(name) then
+    return nil, label .. " barrel is not connected: " .. name
+  end
+
+  if not peripheral.hasType(name, "minecraft:barrel") or not peripheral.hasType(name, "inventory") then
+    return nil, label .. " is not an inventory barrel: " .. name
+  end
+
+  local inventory = peripheral.wrap(name)
+  if not inventory or type(inventory.size) ~= "function" or type(inventory.list) ~= "function" or type(inventory.getItemDetail) ~= "function" or type(inventory.pushItems) ~= "function" then
+    return nil, label .. " barrel does not provide the required inventory methods: " .. name
+  end
+
+  return inventory
+end
+
+function storage.getInbox()
+  return roleInventory(INBOX_NAME, "inbox")
+end
+
+function storage.getOutbox()
+  return roleInventory(OUTBOX_NAME, "outbox")
 end
 
 function storage.newIndex()
@@ -202,18 +240,7 @@ function storage.scanChest(name)
         return nil, "could not read item details for " .. name .. " slot " .. slot
       end
 
-      local item = {
-        name = basic.name,
-        nbt = basic.nbt,
-      }
-      inventory.slots[slot] = {
-        key = storage.itemKey(item),
-        name = basic.name,
-        nbt = basic.nbt,
-        displayName = detail.displayName,
-        count = basic.count,
-        maxCount = detail.maxCount,
-      }
+      inventory.slots[slot] = storage.slotRecord(basic, detail)
     end
   end
 
@@ -239,6 +266,99 @@ end
 function storage.replaceInventories(index, inventories)
   index.inventories = inventories
   storage.rebuildLookups(index)
+end
+
+function storage.validateRegisteredChests(index)
+  local missing = {}
+
+  for _, name in ipairs(storage.registeredChests(index)) do
+    if not storage.isChest(name) then
+      table.insert(missing, name)
+    end
+  end
+
+  if #missing > 0 then
+    return nil, missing
+  end
+
+  return true
+end
+
+function storage.sortedLocations(locations)
+  local result = {}
+
+  for location in pairs(locations) do
+    local name, slot = location:match("^(.*):(%d+)$")
+    table.insert(result, {
+      name = name,
+      slot = tonumber(slot),
+    })
+  end
+
+  table.sort(result, function(a, b)
+    if a.name == b.name then
+      return a.slot < b.slot
+    end
+    return a.name < b.name
+  end)
+
+  return result
+end
+
+function storage.setSlot(index, name, slot, record)
+  local inventory = index.inventories[name]
+  local location = locationKey(name, slot)
+  local previous = inventory.slots[slot]
+
+  if previous == false then
+    inventory.emptyCount = inventory.emptyCount - 1
+    index.emptySlots[location] = nil
+  else
+    local item = index.items[previous.key]
+    item.total = item.total - previous.count
+    item.locations[location] = nil
+    if item.total == 0 then
+      index.items[previous.key] = nil
+    end
+
+    local targets = index.mergeTargets[previous.key]
+    if targets then
+      targets[location] = nil
+      if not next(targets) then
+        index.mergeTargets[previous.key] = nil
+      end
+    end
+  end
+
+  inventory.slots[slot] = record
+
+  if record == false then
+    inventory.emptyCount = inventory.emptyCount + 1
+    index.emptySlots[location] = true
+    return
+  end
+
+  local item = index.items[record.key]
+  if not item then
+    item = {
+      name = record.name,
+      nbt = record.nbt,
+      displayName = record.displayName,
+      total = 0,
+      locations = {},
+    }
+    index.items[record.key] = item
+  end
+
+  item.total = item.total + record.count
+  item.locations[location] = record.count
+
+  local remaining = record.maxCount - record.count
+  if remaining > 0 then
+    local targets = index.mergeTargets[record.key] or {}
+    targets[location] = remaining
+    index.mergeTargets[record.key] = targets
+  end
 end
 
 function storage.indexSummary(index)
