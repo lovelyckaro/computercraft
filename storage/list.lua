@@ -10,9 +10,15 @@ local function matches(item, query)
     or displayName:lower():find(query, 1, true) ~= nil
 end
 
-local function itemLine(item)
+local function itemLine(item, countWidth)
+  local count = ("%" .. countWidth .. "d"):format(item.total)
+  local displayName = item.displayName or item.name
   local variant = item.nbt and " [NBT]" or ""
-  return item.total .. " x " .. (item.displayName or item.name) .. " (" .. item.name .. ")" .. variant
+  local text = count .. " x " .. displayName .. " (" .. item.name .. ")" .. variant
+  local textColours = string.rep(colors.toBlit(colors.green), #count)
+    .. string.rep(colors.toBlit(colors.white), #(" x " .. displayName))
+    .. string.rep(colors.toBlit(colors.lightGray), #(" (" .. item.name .. ")" .. variant))
+  return text, textColours
 end
 
 local function fitToWidth(text, width)
@@ -25,6 +31,19 @@ local function fitToWidth(text, width)
   end
 
   return text:sub(1, width - 3) .. "..."
+end
+
+local function printItem(item, countWidth, width)
+  local text, textColours = itemLine(item, countWidth)
+  local fittedText = fitToWidth(text, width)
+  local fittedColours = textColours:sub(1, #fittedText)
+
+  local textColour = term.getTextColour()
+  local backgroundColour = term.getBackgroundColour()
+  term.blit(fittedText, fittedColours, string.rep(colors.toBlit(backgroundColour), #fittedText))
+  term.setTextColour(textColour)
+  term.setBackgroundColour(backgroundColour)
+  print()
 end
 
 local query = table.concat({ ... }, " "):lower()
@@ -71,10 +90,11 @@ end
 
 local width, height = term.getSize()
 local pageSize = math.max(1, height - 1)
+local countWidth = #tostring(results[1].total)
 local displayed = 0
 
 for _, item in ipairs(results) do
-  print(fitToWidth(itemLine(item), width))
+  printItem(item, countWidth, width)
   displayed = displayed + 1
 
   if displayed < #results and displayed % pageSize == 0 then
