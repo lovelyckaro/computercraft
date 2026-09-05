@@ -217,4 +217,46 @@ function storage.addInventory(index, name, inventory)
   storage.rebuildLookups(index)
 end
 
+function storage.indexSummary(index)
+  local summary = {
+    registeredChests = 0,
+    connectedChests = 0,
+    missingChests = {},
+    totalSlots = 0,
+    emptySlots = 0,
+    occupiedSlots = 0,
+    itemTypes = 0,
+    itemCount = 0,
+    partialCapacity = 0,
+  }
+
+  for name, inventory in pairs(index.inventories) do
+    summary.registeredChests = summary.registeredChests + 1
+    summary.totalSlots = summary.totalSlots + inventory.size
+    summary.emptySlots = summary.emptySlots + inventory.emptyCount
+
+    if storage.isChest(name) then
+      summary.connectedChests = summary.connectedChests + 1
+    else
+      table.insert(summary.missingChests, name)
+    end
+  end
+
+  summary.occupiedSlots = summary.totalSlots - summary.emptySlots
+
+  for _, item in pairs(index.items) do
+    summary.itemTypes = summary.itemTypes + 1
+    summary.itemCount = summary.itemCount + item.total
+  end
+
+  for _, targets in pairs(index.mergeTargets) do
+    for _, remaining in pairs(targets) do
+      summary.partialCapacity = summary.partialCapacity + remaining
+    end
+  end
+
+  table.sort(summary.missingChests)
+  return summary
+end
+
 return storage
