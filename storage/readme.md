@@ -19,6 +19,8 @@ scan every chest.
   render the status capacity bar.
 - [Colors API](https://tweaked.cc/module/colors.html): select the status bar's
   red, yellow, and green segment colors.
+- [Key event](https://tweaked.cc/event/key.html): continue or stop paginated
+  item-list output.
 
 ## Physical Layout
 
@@ -60,7 +62,7 @@ The first version uses the computer terminal as its interface.
 | Command | Behavior |
 | --- | --- |
 | `import` | Moves all items from the inbox into the storage pool. |
-| `list [query]` | Shows indexed item names and available counts, optionally filtered by text. |
+| `list [query]` | Shows indexed items and available counts in descending count order. The optional case-insensitive query matches namespaced IDs and display names; output is paginated by terminal height. |
 | `get <item> [count]` | Moves the requested quantity to the outbox. When stock is insufficient, moves what is available and reports the shortfall. |
 | `register` | Discovers unregistered eligible chest peripherals, scans each once, and adds them to the pool. |
 | `reconcile` | Rebuilds the complete index from all registered pool chests. |
