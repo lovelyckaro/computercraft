@@ -15,6 +15,10 @@ scan every chest.
   inspect inventory slots and transfer items with `pushItems` and `pullItems`.
 - [Item details](https://tweaked.cc/reference/item_details.html): interpret
   item names, NBT hashes, display names, and stack limits.
+- [Terminal API](https://tweaked.cc/module/term.html): size terminal output and
+  render the status capacity bar.
+- [Colors API](https://tweaked.cc/module/colors.html): select the status bar's
+  red, yellow, and green segment colors.
 
 ## Physical Layout
 
@@ -60,7 +64,7 @@ The first version uses the computer terminal as its interface.
 | `get <item> [count]` | Moves the requested quantity to the outbox. When stock is insufficient, moves what is available and reports the shortfall. |
 | `register` | Discovers unregistered eligible chest peripherals, scans each once, and adds them to the pool. |
 | `reconcile` | Rebuilds the complete index from all registered pool chests. |
-| `status` | Reports registered inventories, occupied and empty slots, partial-stack capacity, and index health. |
+| `status` | Reports registered inventories, occupied and empty slots, partial-stack capacity, and index health. Ends with a full-width bar: red for full slots, yellow for partial stacks, and green for empty slots. |
 
 `get` must not mix item types in the outbox. It should fail before moving items
 when the outbox contains a different item, or when it lacks enough free space

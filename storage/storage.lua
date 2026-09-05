@@ -225,6 +225,8 @@ function storage.indexSummary(index)
     totalSlots = 0,
     emptySlots = 0,
     occupiedSlots = 0,
+    partialSlots = 0,
+    fullSlots = 0,
     itemTypes = 0,
     itemCount = 0,
     partialCapacity = 0,
@@ -251,10 +253,12 @@ function storage.indexSummary(index)
 
   for _, targets in pairs(index.mergeTargets) do
     for _, remaining in pairs(targets) do
+      summary.partialSlots = summary.partialSlots + 1
       summary.partialCapacity = summary.partialCapacity + remaining
     end
   end
 
+  summary.fullSlots = summary.occupiedSlots - summary.partialSlots
   table.sort(summary.missingChests)
   return summary
 end
