@@ -1,34 +1,25 @@
 local storage = require("storage")
 
-local function saveUpdatedIndex(index)
+local function beginImport(index, state)
+  index.trusted = false
   local saved, saveError = storage.saveIndex(index)
   if saved then
+    state.started = true
     return true
   end
 
-  index.trusted = false
-  local marked, markError = storage.saveIndex(index)
-  if marked then
-    return nil, "could not save the updated index; it was marked untrusted: " .. saveError
-  end
-
-  return nil, "could not save the updated index: " .. saveError .. "; could not mark it untrusted: " .. markError
+  index.trusted = true
+  return nil, "could not mark storage index untrusted: " .. saveError
 end
 
-local function markUntrusted(index, message)
-  index.trusted = false
-  local saved, saveError = storage.saveIndex(index)
-  if saved then
-    print(message)
-    print("Storage index marked untrusted. Run reconcile before importing again.")
-  else
-    print(message)
-    print("Could not mark storage index untrusted: " .. saveError)
-    print("Run reconcile before importing again.")
+local function moveTo(index, state, inbox, sourceSlot, item, destination, limit)
+  if not state.started then
+    local started, startError = beginImport(index, state)
+    if not started then
+      return nil, startError
+    end
   end
-end
 
-local function moveTo(index, inbox, sourceSlot, item, destination, limit)
   local movedOk, moved = pcall(inbox.pushItems, destination.name, sourceSlot, limit, destination.slot)
   if not movedOk then
     return nil, "could not transfer to " .. destination.name .. " slot " .. destination.slot .. ": " .. tostring(moved)
@@ -54,16 +45,10 @@ local function moveTo(index, inbox, sourceSlot, item, destination, limit)
   end
 
   storage.setSlot(index, destination.name, destination.slot, record)
-
-  local saved, saveError = saveUpdatedIndex(index)
-  if not saved then
-    return nil, saveError
-  end
-
   return moved
 end
 
-local function fillLocations(index, inbox, sourceSlot, item, remaining, locations)
+local function fillLocations(index, state, inbox, sourceSlot, item, remaining, locations)
   local movedTotal = 0
 
   for _, destination in ipairs(storage.sortedLocations(locations)) do
@@ -71,7 +56,7 @@ local function fillLocations(index, inbox, sourceSlot, item, remaining, location
       break
     end
 
-    local moved, moveError = moveTo(index, inbox, sourceSlot, item, destination, remaining)
+    local moved, moveError = moveTo(index, state, inbox, sourceSlot, item, destination, remaining)
     if not moved then
       return nil, moveError
     end
@@ -128,6 +113,7 @@ if not sized or type(inboxSize) ~= "number" or not listed or type(inboxItems) ~=
 end
 
 local imported = 0
+local importState = { started = false }
 for sourceSlot = 1, inboxSize do
   if inboxItems[sourceSlot] then
     local detailed, item = pcall(inbox.getItemDetail, sourceSlot)
@@ -139,17 +125,23 @@ for sourceSlot = 1, inboxSize do
     local key = storage.itemKey(item)
     local remaining = item.count
     local moved
-    remaining, moved = fillLocations(index, inbox, sourceSlot, item, remaining, index.mergeTargets[key] or {})
+    remaining, moved = fillLocations(index, importState, inbox, sourceSlot, item, remaining, index.mergeTargets[key] or {})
     if not remaining then
-      markUntrusted(index, "Import stopped: " .. moved)
+      print("Import stopped: " .. moved)
+      if importState.started then
+        print("Storage index remains untrusted. Run reconcile before importing again.")
+      end
       return
     end
     imported = imported + moved
 
     if remaining > 0 then
-      remaining, moved = fillLocations(index, inbox, sourceSlot, item, remaining, index.emptySlots)
+      remaining, moved = fillLocations(index, importState, inbox, sourceSlot, item, remaining, index.emptySlots)
       if not remaining then
-        markUntrusted(index, "Import stopped: " .. moved)
+        print("Import stopped: " .. moved)
+        if importState.started then
+          print("Storage index remains untrusted. Run reconcile before importing again.")
+        end
         return
       end
       imported = imported + moved
@@ -158,6 +150,16 @@ for sourceSlot = 1, inboxSize do
     if remaining > 0 then
       print("Left " .. remaining .. " x " .. (item.displayName or item.name) .. " in inbox slot " .. sourceSlot .. ": pool is full.")
     end
+  end
+end
+
+if importState.started then
+  index.trusted = true
+  local saved, saveError = storage.saveIndex(index)
+  if not saved then
+    print("Could not save completed storage index: " .. saveError)
+    print("Storage index remains untrusted. Run reconcile before importing again.")
+    return
   end
 end
 

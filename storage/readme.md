@@ -155,8 +155,10 @@ emptySlots = {
 After each confirmed transfer, update the source and destination records in
 `inventories`, the affected `items` totals and locations, matching
 `mergeTargets`, and `emptySlots`. These targeted updates avoid full scans as
-the pool grows. Persist the complete index atomically after each confirmed
-transfer.
+the pool grows. Before an item-moving command begins its first transfer, persist
+the index as untrusted. Keep its updates in memory, then atomically persist the
+completed trusted index when the command finishes. An interrupted command
+therefore requires `reconcile` without writing the complete index per transfer.
 
 `reconcile` rebuilds the canonical inventory records from the registered
 chests, then recreates the catalog and import lookup tables from those records.
