@@ -194,8 +194,10 @@ command scan every chest.
 The index assumes that registered pool chests are changed only through this
 system. If a player or another automation modifies a pool chest directly, run
 `reconcile`. Reconciliation scans every registered chest and rebuilds all item
-locations and capacity records. It is also the recovery path for a missing,
-corrupt, or untrusted index.
+locations and capacity records. It is also the recovery path for an untrusted
+index that still has a readable registration list. If the index cannot be read,
+restore a backup or remove the invalid index and run `register` to intentionally
+create a new pool.
 
 ## Persistence And Failure Handling
 
@@ -205,6 +207,8 @@ corrupt, or untrusted index.
   present and expose the expected inventory operations.
 - Stop the affected operation and clearly report a missing peripheral, failed
   move, full outbox, or exhausted pool capacity.
+- Reconciliation is all-or-nothing. If any registered chest cannot be scanned,
+  keep the existing inventory records and mark the index untrusted.
 - If a move cannot be confirmed or the program stops during a transfer, mark
   the index untrusted and require `reconcile` before subsequent indexed moves.
 - Never discard an item to recover from an error. Items not transferred remain

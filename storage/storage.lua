@@ -175,8 +175,16 @@ function storage.scanChest(name)
     return nil, "chest does not provide the required inventory methods: " .. name
   end
 
-  local size = chest.size()
-  local listed = chest.list()
+  local sized, size = pcall(chest.size)
+  if not sized or type(size) ~= "number" then
+    return nil, "could not read inventory size for " .. name .. ": " .. tostring(size)
+  end
+
+  local listedOk, listed = pcall(chest.list)
+  if not listedOk or type(listed) ~= "table" then
+    return nil, "could not list inventory contents for " .. name .. ": " .. tostring(listed)
+  end
+
   local inventory = {
     size = size,
     emptyCount = 0,
@@ -189,8 +197,8 @@ function storage.scanChest(name)
       inventory.slots[slot] = false
       inventory.emptyCount = inventory.emptyCount + 1
     else
-      local detail = chest.getItemDetail(slot)
-      if not detail or type(detail.maxCount) ~= "number" then
+      local detailed, detail = pcall(chest.getItemDetail, slot)
+      if not detailed or not detail or type(detail.maxCount) ~= "number" then
         return nil, "could not read item details for " .. name .. " slot " .. slot
       end
 
@@ -214,6 +222,22 @@ end
 
 function storage.addInventory(index, name, inventory)
   index.inventories[name] = inventory
+  storage.rebuildLookups(index)
+end
+
+function storage.registeredChests(index)
+  local names = {}
+
+  for name in pairs(index.inventories) do
+    table.insert(names, name)
+  end
+
+  table.sort(names)
+  return names
+end
+
+function storage.replaceInventories(index, inventories)
+  index.inventories = inventories
   storage.rebuildLookups(index)
 end
 
