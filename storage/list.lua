@@ -1,15 +1,5 @@
 local storage = require("storage")
 
-local function matches(item, query)
-  if query == "" then
-    return true
-  end
-
-  local displayName = item.displayName or item.name
-  return item.name:lower():find(query, 1, true) ~= nil
-    or displayName:lower():find(query, 1, true) ~= nil
-end
-
 local function itemLine(item, countWidth)
   local count = ("%" .. countWidth .. "d"):format(item.total)
   local displayName = item.displayName or item.name
@@ -58,30 +48,7 @@ if not index.trusted then
   return
 end
 
-local results = {}
-for _, item in pairs(index.items) do
-  if matches(item, query) then
-    table.insert(results, item)
-  end
-end
-
-table.sort(results, function(a, b)
-  if a.total ~= b.total then
-    return a.total > b.total
-  end
-
-  local aDisplay = (a.displayName or a.name):lower()
-  local bDisplay = (b.displayName or b.name):lower()
-  if aDisplay ~= bDisplay then
-    return aDisplay < bDisplay
-  end
-
-  if a.name ~= b.name then
-    return a.name < b.name
-  end
-
-  return (a.nbt or "") < (b.nbt or "")
-end)
+local results = storage.searchItems(index, query)
 
 if #results == 0 then
   print("No matching items.")

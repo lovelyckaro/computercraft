@@ -12,7 +12,8 @@ scan every chest.
 - [Peripheral API](https://tweaked.cc/module/peripheral.html): discover,
   identify, and wrap connected peripherals.
 - [Inventory peripheral](https://tweaked.cc/generic_peripheral/inventory.html):
-  inspect inventory slots and transfer items with `pushItems` and `pullItems`.
+  inspect inventory slots and limits, and transfer items with `pushItems` and
+  `pullItems`.
 - [Item details](https://tweaked.cc/reference/item_details.html): interpret
   item names, NBT hashes, display names, and stack limits.
 - [Terminal API](https://tweaked.cc/module/term.html): size terminal output and
@@ -63,14 +64,15 @@ The first version uses the computer terminal as its interface.
 | --- | --- |
 | `import` | Moves all items from the inbox into the storage pool. |
 | `list [query]` | Shows indexed items and available counts in descending count order. The optional case-insensitive query matches namespaced IDs and display names; output is paginated by terminal height. |
-| `get <item> [count]` | Moves the requested quantity to the outbox. When stock is insufficient, moves what is available and reports the shortfall. |
+| `get <query> [count\|all]` | Finds items with the same query rules as `list`, selects only the highest-count match, and exports it to the outbox. The default is one stack; `all` exports as much of that selected item as fits. |
 | `register` | Discovers unregistered eligible chest peripherals, scans each once, and adds them to the pool. |
 | `reconcile` | Rebuilds the complete index from all registered pool chests. |
 | `status` | Reports registered inventories, occupied and empty slots, partial-stack capacity, and index health. Ends with a full-width bar: red for full slots, yellow for partial stacks, and green for empty slots. |
 
-`get` must not mix item types in the outbox. It should fail before moving items
-when the outbox contains a different item, or when it lacks enough free space
-for the amount that can be exported.
+`get` must not mix item types in the outbox. It fails before moving items when
+the outbox contains a different item, or when it lacks enough free space for a
+numeric or default request. It never falls back to another query match when the
+selected item runs out.
 
 ## Index
 
@@ -106,13 +108,15 @@ implementation may serialize that pair as a string, such as
 ### Item Catalog
 
 `items` is keyed by item key and provides the fast lookup used by `list` and
-`get`. Every entry contains the item's display data, its aggregate `total`, and
-the count at every occupied location.
+`get`. Every entry contains the item's display data, aggregate `total`,
+`maxCount` for a default-stack request, and the count at every occupied
+location.
 
 ```lua
 items = {
   ["minecraft:stone"] = {
     name = "minecraft:stone",
+    maxCount = 64,
     total = 106,
     locations = {
       ["minecraft:chest_0:1"] = 42,
@@ -183,9 +187,13 @@ continued safely.
 ### Export
 
 For `get`, the system finds indexed locations for the requested item and moves
-from them into the outbox until the request, stock, or outbox space is
-exhausted. It reports the requested amount, transferred amount, and any
-shortfall. Source slot records are updated after each confirmed move.
+from them into the outbox until the requested amount is met. Query matching is
+case-insensitive text matching against namespaced IDs and display names; if more
+than one item matches, only the highest-count match is used. Without a count,
+the request is one stack of that item; `all` exports up to available outbox
+capacity. Numeric and default requests fail before moving items when the outbox
+cannot hold the available requested amount. Source slot records are updated
+after each confirmed move.
 
 ## Registration And Reconciliation
 

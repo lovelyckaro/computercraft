@@ -1,23 +1,12 @@
 local storage = require("storage")
 
-local function beginImport(index, state)
-  index.trusted = false
-  local saved, saveError = storage.saveIndex(index)
-  if saved then
-    state.started = true
-    return true
-  end
-
-  index.trusted = true
-  return nil, "could not mark storage index untrusted: " .. saveError
-end
-
 local function moveTo(index, state, inbox, sourceSlot, item, destination, limit)
   if not state.started then
-    local started, startError = beginImport(index, state)
+    local started, startError = storage.beginTransaction(index)
     if not started then
       return nil, startError
     end
+    state.started = true
   end
 
   local movedOk, moved = pcall(inbox.pushItems, destination.name, sourceSlot, limit, destination.slot)
@@ -154,8 +143,7 @@ for sourceSlot = 1, inboxSize do
 end
 
 if importState.started then
-  index.trusted = true
-  local saved, saveError = storage.saveIndex(index)
+  local saved, saveError = storage.completeTransaction(index)
   if not saved then
     print("Could not save completed storage index: " .. saveError)
     print("Storage index remains untrusted. Run reconcile before importing again.")

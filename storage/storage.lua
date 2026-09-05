@@ -37,7 +37,7 @@ local function roleInventory(name, label)
   end
 
   local inventory = peripheral.wrap(name)
-  if not inventory or type(inventory.size) ~= "function" or type(inventory.list) ~= "function" or type(inventory.getItemDetail) ~= "function" or type(inventory.pushItems) ~= "function" then
+  if not inventory or type(inventory.size) ~= "function" or type(inventory.list) ~= "function" or type(inventory.getItemDetail) ~= "function" or type(inventory.getItemLimit) ~= "function" or type(inventory.pushItems) ~= "function" then
     return nil, label .. " barrel does not provide the required inventory methods: " .. name
   end
 
@@ -50,6 +50,10 @@ end
 
 function storage.getOutbox()
   return roleInventory(OUTBOX_NAME, "outbox")
+end
+
+function storage.outboxName()
+  return OUTBOX_NAME
 end
 
 function storage.newIndex()
@@ -85,6 +89,7 @@ function storage.rebuildLookups(index)
             name = record.name,
             nbt = record.nbt,
             displayName = record.displayName,
+            maxCount = record.maxCount,
             total = 0,
             locations = {},
           }
@@ -182,6 +187,22 @@ function storage.saveIndex(index)
   end
 
   return true
+end
+
+function storage.beginTransaction(index)
+  index.trusted = false
+  local saved, saveError = storage.saveIndex(index)
+  if saved then
+    return true
+  end
+
+  index.trusted = true
+  return nil, saveError
+end
+
+function storage.completeTransaction(index)
+  index.trusted = true
+  return storage.saveIndex(index)
 end
 
 function storage.isChest(name)
@@ -344,6 +365,7 @@ function storage.setSlot(index, name, slot, record)
       name = record.name,
       nbt = record.nbt,
       displayName = record.displayName,
+      maxCount = record.maxCount,
       total = 0,
       locations = {},
     }
@@ -359,6 +381,38 @@ function storage.setSlot(index, name, slot, record)
     targets[location] = remaining
     index.mergeTargets[record.key] = targets
   end
+end
+
+function storage.searchItems(index, query)
+  local results = {}
+  local normalizedQuery = query:lower()
+
+  for _, item in pairs(index.items) do
+    local displayName = item.displayName or item.name
+    if normalizedQuery == "" or item.name:lower():find(normalizedQuery, 1, true) or displayName:lower():find(normalizedQuery, 1, true) then
+      table.insert(results, item)
+    end
+  end
+
+  table.sort(results, function(a, b)
+    if a.total ~= b.total then
+      return a.total > b.total
+    end
+
+    local aDisplay = (a.displayName or a.name):lower()
+    local bDisplay = (b.displayName or b.name):lower()
+    if aDisplay ~= bDisplay then
+      return aDisplay < bDisplay
+    end
+
+    if a.name ~= b.name then
+      return a.name < b.name
+    end
+
+    return (a.nbt or "") < (b.nbt or "")
+  end)
+
+  return results
 end
 
 function storage.indexSummary(index)
