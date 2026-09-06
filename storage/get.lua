@@ -4,40 +4,23 @@ local function usage()
   print("Usage: get <query> [count|all]")
 end
 
-local function outboxTargets(outbox, item)
+local function emptyOutboxTargets(outbox, item)
   local sized, size = pcall(outbox.size)
   local listed, items = pcall(outbox.list)
   if not sized or type(size) ~= "number" or not listed or type(items) ~= "table" then
     return nil, "could not read outbox contents"
   end
 
-  local partial = {}
   local empty = {}
   local capacity = 0
-  local key = storage.itemKey(item)
 
   for slot = 1, size do
-    local limited, slotLimit = pcall(outbox.getItemLimit, slot)
-    if not limited or type(slotLimit) ~= "number" then
-      return nil, "could not read outbox slot limit for slot " .. slot
-    end
-
-    if items[slot] then
-      local detailed, detail = pcall(outbox.getItemDetail, slot)
-      if not detailed or not detail or type(detail.maxCount) ~= "number" then
-        return nil, "could not read outbox item details for slot " .. slot
+    if not items[slot] then
+      local limited, slotLimit = pcall(outbox.getItemLimit, slot)
+      if not limited or type(slotLimit) ~= "number" then
+        return nil, "could not read outbox slot limit for slot " .. slot
       end
 
-      if storage.itemKey(detail) ~= key then
-        return nil, "outbox contains a different item in slot " .. slot
-      end
-
-      local remaining = math.min(slotLimit, detail.maxCount) - detail.count
-      if remaining > 0 then
-        table.insert(partial, { slot = slot, capacity = remaining })
-        capacity = capacity + remaining
-      end
-    else
       local slotCapacity = math.min(slotLimit, item.maxCount)
       if slotCapacity > 0 then
         table.insert(empty, { slot = slot, capacity = slotCapacity })
@@ -46,7 +29,7 @@ local function outboxTargets(outbox, item)
     end
   end
 
-  return { partial = partial, empty = empty }, capacity
+  return empty, capacity
 end
 
 local function moveToOutbox(index, state, source, destination, limit)
@@ -196,7 +179,7 @@ if not outbox then
   return
 end
 
-local targets, capacity = outboxTargets(outbox, item)
+local targets, capacity = emptyOutboxTargets(outbox, item)
 if not targets then
   print("Cannot export: " .. capacity)
   return
@@ -206,27 +189,18 @@ local amount
 if amountType == "all" then
   amount = math.min(available, capacity)
 elseif amountType == "count" then
-  amount = math.min(requested, available)
+  amount = math.min(requested, available, capacity)
 else
-  amount = math.min(item.maxCount, available)
+  amount = math.min(item.maxCount, available, capacity)
 end
 
 if amount == 0 then
-  print("Outbox has no space for " .. displayName .. ".")
-  return
-end
-
-if amountType ~= "all" and capacity < amount then
-  print("Outbox can hold only " .. capacity .. " x " .. displayName .. "; no items moved.")
+  print("Outbox has no empty slots; no items moved.")
   return
 end
 
 local state = { started = false }
-for _, destination in ipairs(targets.empty) do
-  table.insert(targets.partial, destination)
-end
-
-local transferred, transferError = fillOutbox(index, state, item, amount, targets.partial)
+local transferred, transferError = fillOutbox(index, state, item, amount, targets)
 
 if not transferred then
   print("Export stopped: " .. transferError)
@@ -246,6 +220,9 @@ end
 print("Exported " .. transferred .. " x " .. displayName .. ".")
 if (amountType == "count" and requested > available) or (amountType == "default" and item.maxCount > available) then
   print("The selected " .. displayName .. " ran out; no other matching items were used.")
-elseif amountType == "all" and transferred < available then
-  print("Outbox is full.")
+end
+if (amountType == "count" and capacity < math.min(requested, available))
+  or (amountType == "default" and capacity < math.min(item.maxCount, available))
+  or (amountType == "all" and available > capacity) then
+  print("Outbox had room for only " .. transferred .. " x " .. displayName .. ".")
 end

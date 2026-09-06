@@ -69,10 +69,10 @@ The first version uses the computer terminal as its interface.
 | `reconcile` | Rebuilds the complete index from all registered pool chests. |
 | `status` | Reports registered inventories, occupied and empty slots, partial-stack capacity, and index health. Ends with a full-width bar: red for full slots, yellow for partial stacks, and green for empty slots. |
 
-`get` must not mix item types in the outbox. It fails before moving items when
-the outbox contains a different item, or when it lacks enough free space for a
-numeric or default request. It never falls back to another query match when the
-selected item runs out.
+`get` may use an outbox containing other item types, but places exports only in
+empty outbox slots. It exports as much as those empty slots permit and reports
+any shortfall. It never falls back to another query match when the selected item
+runs out.
 
 ## Index
 
@@ -197,9 +197,9 @@ from them into the outbox until the requested amount is met. Query matching is
 case-insensitive text matching against namespaced IDs and display names; if more
 than one item matches, only the highest-count match is used. Without a count,
 the request is one stack of that item; `all` exports up to available outbox
-capacity. Numeric and default requests fail before moving items when the outbox
-cannot hold the available requested amount. Source slot records are updated
-after each confirmed move.
+empty-slot capacity. Numeric and default requests may be partially fulfilled
+when the outbox lacks empty-slot capacity. Source slot records are updated after
+each confirmed move.
 
 ## Registration And Reconciliation
 
