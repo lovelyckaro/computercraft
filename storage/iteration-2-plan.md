@@ -75,7 +75,9 @@ index.
 ### Milestone 2: In-Memory Registration And Reconciliation
 
 Move `register` and `reconcile` into service operations. Verify pool expansion
-and reconciliation through the service.
+and reconciliation through the service. Refactor the standalone executables to
+load an index, call `storage.register` or `storage.reconcile`, and save only if
+the shared operation changed the index or its trust state.
 
 ### Milestone 3: In-Memory Import And Export
 

@@ -362,6 +362,34 @@ function storage.addInventory(index, name, inventory)
   end
 end
 
+function storage.register(index)
+  local names = storage.discoverChests(index)
+  if #names == 0 then
+    print("No unregistered storage chests found.")
+    return false
+  end
+
+  local registered = 0
+  for _, name in ipairs(names) do
+    local inventory, scanError = storage.scanChest(name)
+    if not inventory then
+      print("Skipped " .. name .. ": " .. scanError)
+    else
+      storage.addInventory(index, name, inventory)
+      registered = registered + 1
+      print("Registered " .. name .. " (" .. inventory.size .. " slots).")
+    end
+  end
+
+  if registered == 0 then
+    print("No storage chests were registered.")
+    return false
+  end
+
+  print("Registered " .. registered .. " storage chest(s).")
+  return true
+end
+
 function storage.registeredChests(index)
   local names = {}
 
@@ -377,6 +405,48 @@ function storage.replaceInventories(index, inventories)
   index.inventories = inventories
   index.version = INDEX_VERSION
   storage.rebuildLookups(index)
+end
+
+function storage.reconcile(index)
+  local names = storage.registeredChests(index)
+  if #names == 0 then
+    print("No storage chests are registered. Run register first.")
+    return false
+  end
+
+  local inventories = {}
+  local failures = {}
+
+  for _, name in ipairs(names) do
+    local inventory, scanError = storage.scanChest(name)
+    if inventory then
+      inventories[name] = inventory
+    else
+      table.insert(failures, name .. ": " .. scanError)
+    end
+  end
+
+  if #failures > 0 then
+    print("Reconciliation failed; the existing inventory records were kept.")
+    for _, failure in ipairs(failures) do
+      print("  " .. failure)
+    end
+
+    if index.trusted then
+      index.trusted = false
+      return true
+    end
+    return false
+  end
+
+  storage.replaceInventories(index, inventories)
+  index.trusted = true
+
+  local summary = storage.indexSummary(index)
+  print("Reconciled " .. summary.registeredChests .. " storage chest(s).")
+  print("Slots: " .. summary.totalSlots .. " total, " .. summary.occupiedSlots .. " occupied, " .. summary.emptySlots .. " empty")
+  print("Indexed items: " .. summary.itemCount .. " across " .. summary.itemTypes .. " item types")
+  return true
 end
 
 function storage.validateRegisteredChests(index)
