@@ -7,6 +7,7 @@ local programDirectory = fs.getDir(shell.getRunningProgram())
 local indexPath = fs.combine(programDirectory, "index")
 local backupPath = indexPath .. ".bak"
 local temporaryPath = indexPath .. ".tmp"
+local serviceMarkerPath = fs.combine(programDirectory, "service.running")
 
 local function locationKey(name, slot)
   return name .. ":" .. slot
@@ -166,6 +167,34 @@ function storage.saveIndex(index)
     fs.delete(backupPath)
   end
 
+  return true
+end
+
+function storage.serviceIsRunning()
+  return fs.exists(serviceMarkerPath)
+end
+
+function storage.startService()
+  if storage.serviceIsRunning() then
+    return nil, "storage service is already running or stopped uncleanly"
+  end
+
+  local handle, openError = fs.open(serviceMarkerPath, "w")
+  if not handle then
+    return nil, "could not create service marker: " .. openError
+  end
+  handle.close()
+  return true
+end
+
+function storage.stopService()
+  if fs.exists(serviceMarkerPath) then
+    fs.delete(serviceMarkerPath)
+  end
+
+  if fs.exists(serviceMarkerPath) then
+    return nil, "could not remove service marker"
+  end
   return true
 end
 
@@ -464,6 +493,131 @@ function storage.indexSummary(index)
   summary.fullSlots = summary.occupiedSlots - summary.partialSlots
   table.sort(summary.missingChests)
   return summary
+end
+
+local function drawCapacityBar(summary)
+  if summary.totalSlots == 0 then
+    print("Capacity: no registered slots")
+    return
+  end
+
+  local width = term.getSize()
+  local segments = {
+    { amount = summary.fullSlots, colour = colors.red, remainder = 0, width = 0 },
+    { amount = summary.partialSlots, colour = colors.yellow, remainder = 0, width = 0 },
+    { amount = summary.emptySlots, colour = colors.green, remainder = 0, width = 0 },
+  }
+  local assigned = 0
+
+  for _, segment in ipairs(segments) do
+    local exactWidth = segment.amount * width / summary.totalSlots
+    segment.width = math.floor(exactWidth)
+    segment.remainder = exactWidth - segment.width
+    assigned = assigned + segment.width
+  end
+
+  for _ = assigned + 1, width do
+    local chosen = segments[1]
+    for _, segment in ipairs(segments) do
+      if segment.remainder > chosen.remainder then
+        chosen = segment
+      end
+    end
+    chosen.width = chosen.width + 1
+    chosen.remainder = -1
+  end
+
+  local textColour = term.getTextColour()
+  local backgroundColour = term.getBackgroundColour()
+  term.blit(string.rep(" ", width), string.rep(colors.toBlit(textColour), width), (string.rep(colors.toBlit(colors.red), segments[1].width) .. string.rep(colors.toBlit(colors.yellow), segments[2].width) .. string.rep(colors.toBlit(colors.green), segments[3].width)))
+  term.setTextColour(textColour)
+  term.setBackgroundColour(backgroundColour)
+  print()
+end
+
+function storage.printStatus(index)
+  local summary = storage.indexSummary(index)
+
+  if index.trusted then
+    print("Index: trusted")
+  else
+    print("Index: UNTRUSTED - run reconcile")
+  end
+
+  print("Registered chests: " .. summary.registeredChests .. " (" .. summary.connectedChests .. " connected)")
+  print("Slots: " .. summary.totalSlots .. " total, " .. summary.occupiedSlots .. " occupied, " .. summary.emptySlots .. " empty")
+  print("Indexed items: " .. summary.itemCount .. " across " .. summary.itemTypes .. " item types")
+  print("Partial-stack capacity: " .. summary.partialCapacity)
+
+  if #summary.missingChests > 0 then
+    print("Missing registered chests:")
+    for _, name in ipairs(summary.missingChests) do
+      print("  " .. name)
+    end
+  end
+
+  drawCapacityBar(summary)
+end
+
+local function fitToWidth(text, width)
+  if #text <= width then
+    return text
+  end
+  if width <= 3 then
+    return string.rep(".", width)
+  end
+  return text:sub(1, width - 3) .. "..."
+end
+
+local function printItem(item, countWidth, width)
+  local count = ("%" .. countWidth .. "d"):format(item.total)
+  local displayName = item.displayName or item.name
+  local variant = item.nbt and " [NBT]" or ""
+  local text = count .. " x " .. displayName .. " (" .. item.name .. ")" .. variant
+  local textColours = string.rep(colors.toBlit(colors.green), #count)
+    .. string.rep(colors.toBlit(colors.white), #(" x " .. displayName))
+    .. string.rep(colors.toBlit(colors.lightGray), #(" (" .. item.name .. ")" .. variant))
+  local fittedText = fitToWidth(text, width)
+  local textColour = term.getTextColour()
+  local backgroundColour = term.getBackgroundColour()
+  term.blit(fittedText, textColours:sub(1, #fittedText), string.rep(colors.toBlit(backgroundColour), #fittedText))
+  term.setTextColour(textColour)
+  term.setBackgroundColour(backgroundColour)
+  print()
+end
+
+function storage.printList(index, query, waitForNextPage)
+  if not index.trusted then
+    print("Storage index is untrusted. Run reconcile before listing items.")
+    return
+  end
+
+  local results = storage.searchItems(index, query or "")
+  if #results == 0 then
+    print("No matching items.")
+    return
+  end
+
+  local width, height = term.getSize()
+  local pageSize = math.max(1, height - 1)
+  local countWidth = #tostring(results[1].total)
+  local displayed = 0
+
+  for _, item in ipairs(results) do
+    printItem(item, countWidth, width)
+    displayed = displayed + 1
+
+    if displayed < #results and displayed % pageSize == 0 then
+      print(fitToWidth("Press any key for next page; Q to stop.", width))
+      local continue = waitForNextPage and waitForNextPage() or select(2, os.pullEvent("key")) ~= keys.q
+      if not continue then
+        print("Displayed " .. displayed .. " of " .. #results .. " matching items.")
+        return
+      end
+    end
+  end
+
+  print("Displayed " .. displayed .. " matching item(s).")
 end
 
 return storage

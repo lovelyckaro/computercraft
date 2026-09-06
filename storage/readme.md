@@ -51,8 +51,10 @@ storage/
   list.lua        List indexed items
   register.lua    Register newly connected pool chests
   reconcile.lua   Rebuild the persisted index
+  service.lua     Iteration-2 long-running storage service
   status.lua      Display pool and index status
   index           Generated persisted storage index
+  service.running Service lifecycle marker while iteration-2 service runs
   readme.md       System design
 ```
 
