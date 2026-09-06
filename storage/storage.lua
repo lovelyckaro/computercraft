@@ -366,25 +366,17 @@ function storage.validateRegisteredChests(index)
   return true
 end
 
-function storage.sortedLocations(locations)
-  local result = {}
-
-  for location in pairs(locations) do
-    local name, slot = location:match("^(.*):(%d+)$")
-    table.insert(result, {
-      name = name,
-      slot = tonumber(slot),
-    })
+function storage.anyLocation(locations)
+  local location = next(locations)
+  if not location then
+    return nil
   end
 
-  table.sort(result, function(a, b)
-    if a.name == b.name then
-      return a.slot < b.slot
-    end
-    return a.name < b.name
-  end)
-
-  return result
+  local name, slot = location:match("^(.*):(%d+)$")
+  return {
+    name = name,
+    slot = tonumber(slot),
+  }
 end
 
 function storage.setSlot(index, name, slot, record)

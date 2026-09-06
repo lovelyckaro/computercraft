@@ -92,13 +92,11 @@ local function moveToOutbox(index, state, source, destination, limit)
 end
 
 local function fillOutbox(index, state, item, amount, targets)
-  local sources = storage.sortedLocations(item.locations)
-  local sourceIndex = 1
   local transferred = 0
 
   for _, destination in ipairs(targets) do
     while amount > 0 and destination.capacity > 0 do
-      local source = sources[sourceIndex]
+      local source = storage.anyLocation(item.locations)
       if not source then
         return nil, "selected item ran out unexpectedly"
       end
@@ -113,10 +111,6 @@ local function fillOutbox(index, state, item, amount, targets)
       amount = amount - moved
       destination.capacity = destination.capacity - moved
       transferred = transferred + moved
-
-      if moved == record.count then
-        sourceIndex = sourceIndex + 1
-      end
     end
   end
 

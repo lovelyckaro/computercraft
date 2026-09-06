@@ -135,7 +135,8 @@ cannot, rather than treating every item with the same name as identical.
 
 `mergeTargets` is keyed by item key, then location. It contains every partial
 stack and its remaining capacity. `import` uses it first to fill compatible
-stacks without searching all inventories.
+stacks without searching all inventories. It selects any available location in
+expected constant time; placement order is intentionally unspecified.
 
 ```lua
 mergeTargets = {
@@ -148,7 +149,8 @@ mergeTargets = {
 `emptySlots` contains every unoccupied pool location. If no merge target has
 capacity, `import` chooses a location from this table. An empty slot has no
 fixed item capacity: its capacity depends on the item placed into it, so it is
-not represented as a fixed free-item count.
+not represented as a fixed free-item count. Selecting an empty slot is expected
+constant time and intentionally unordered.
 
 ```lua
 emptySlots = {

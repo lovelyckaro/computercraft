@@ -40,8 +40,9 @@ end
 local function fillLocations(index, state, inbox, sourceSlot, item, remaining, locations)
   local movedTotal = 0
 
-  for _, destination in ipairs(storage.sortedLocations(locations)) do
-    if remaining == 0 then
+  while remaining > 0 do
+    local destination = storage.anyLocation(locations)
+    if not destination then
       break
     end
 
