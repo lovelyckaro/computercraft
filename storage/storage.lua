@@ -690,4 +690,194 @@ function storage.printList(index, query, waitForNextPage)
   print("Displayed " .. displayed .. " matching item(s).")
 end
 
+local function beginTransfer(index, state, beforeMove)
+  if state.started then
+    return true
+  end
+  if beforeMove then
+    local started, startError = beforeMove(index)
+    if not started then
+      return nil, startError
+    end
+  end
+  state.started = true
+  return true
+end
+
+function storage.import(index, beforeMove)
+  if not index.trusted then
+    print("Storage index is untrusted. Run reconcile before importing.")
+    return false
+  end
+  if #storage.registeredChests(index) == 0 then
+    print("No storage chests are registered. Run register first.")
+    return false
+  end
+  local connected, missing = storage.validateRegisteredChests(index)
+  if not connected then
+    print("Cannot import while registered chests are missing:")
+    for _, name in ipairs(missing) do print("  " .. name) end
+    return false
+  end
+  local inbox, inboxError = storage.getInbox()
+  if not inbox then print("Cannot import: " .. inboxError) return false end
+  local _, outboxError = storage.getOutbox()
+  if outboxError then print("Cannot import: " .. outboxError) return false end
+  local sized, inboxSize = pcall(inbox.size)
+  local listed, inboxItems = pcall(inbox.list)
+  if not sized or type(inboxSize) ~= "number" or not listed or type(inboxItems) ~= "table" then
+    print("Could not read inbox contents.")
+    return false
+  end
+
+  local state = { started = false }
+  local imported = 0
+  local function moveTo(sourceSlot, item, destination, limit)
+    local started, startError = beginTransfer(index, state, beforeMove)
+    if not started then return nil, startError end
+    local movedOk, moved = pcall(inbox.pushItems, destination.name, sourceSlot, limit, destination.slot)
+    if not movedOk or type(moved) ~= "number" or moved <= 0 or moved > limit then
+      return nil, "selected destination " .. destination.name .. " slot " .. destination.slot .. " accepted no items"
+    end
+    local previous = index.inventories[destination.name].slots[destination.slot]
+    local record = previous == false and storage.slotRecord(item, item, moved) or {
+      key = previous.key, name = previous.name, nbt = previous.nbt,
+      displayName = previous.displayName, count = previous.count + moved, maxCount = previous.maxCount,
+    }
+    storage.setSlot(index, destination.name, destination.slot, record)
+    return moved
+  end
+  local function fill(sourceSlot, item, remaining, locations)
+    local movedTotal = 0
+    while remaining > 0 do
+      local destination = storage.anyLocation(locations)
+      if not destination then break end
+      local moved, moveError = moveTo(sourceSlot, item, destination, remaining)
+      if not moved then return nil, moveError end
+      remaining = remaining - moved
+      movedTotal = movedTotal + moved
+    end
+    return remaining, movedTotal
+  end
+  for sourceSlot = 1, inboxSize do
+    if inboxItems[sourceSlot] then
+      local detailed, item = pcall(inbox.getItemDetail, sourceSlot)
+      if not detailed or not item or type(item.maxCount) ~= "number" then
+        print("Could not read item details for inbox slot " .. sourceSlot .. ".")
+        if state.started then index.trusted = false end
+        return imported > 0
+      end
+      local remaining, moved = fill(sourceSlot, item, item.count, index.mergeTargets[storage.itemKey(item)] or {})
+      if not remaining then
+        print("Import stopped: " .. moved)
+        index.trusted = false
+        return true
+      end
+      imported = imported + moved
+      if remaining > 0 then
+        remaining, moved = fill(sourceSlot, item, remaining, index.emptySlots)
+        if not remaining then
+          print("Import stopped: " .. moved)
+          index.trusted = false
+          return true
+        end
+        imported = imported + moved
+      end
+      if remaining > 0 then print("Left " .. remaining .. " x " .. (item.displayName or item.name) .. " in inbox slot " .. sourceSlot .. ": pool is full.") end
+    end
+  end
+  print(imported == 0 and "No items imported." or "Imported " .. imported .. " item(s).")
+  return state.started
+end
+
+function storage.get(index, arguments, beforeMove)
+  if #arguments == 0 then print("Usage: get <query> [count|all]") return false end
+  local amountType, requested = "default", nil
+  if #arguments > 1 then
+    local last = arguments[#arguments]
+    if last == "all" then
+      amountType = "all"
+      table.remove(arguments)
+    elseif tonumber(last) ~= nil then
+      if not last:match("^%d+$") or tonumber(last) < 1 then
+        print("Count must be a positive whole number or all.")
+        return false
+      end
+      amountType, requested = "count", tonumber(last)
+      table.remove(arguments)
+    end
+  end
+  local query = table.concat(arguments, " ")
+  if query == "" then print("Usage: get <query> [count|all]") return false end
+  if not index.trusted then print("Storage index is untrusted. Run reconcile before exporting items.") return false end
+  local matches = storage.searchItems(index, query)
+  if #matches == 0 then print("No matching items for " .. query .. ".") return false end
+  local item = matches[1]
+  local displayName, available = item.displayName or item.name, item.total
+  if #matches > 1 then print("Selected " .. displayName .. " with " .. available .. " items available.") end
+  local connected, missing = storage.validateRegisteredChests(index)
+  if not connected then
+    print("Cannot export while registered chests are missing:")
+    for _, name in ipairs(missing) do print("  " .. name) end
+    return false
+  end
+  local _, inboxError = storage.getInbox()
+  if inboxError then print("Cannot export: " .. inboxError) return false end
+  local outbox, outboxError = storage.getOutbox()
+  if not outbox then print("Cannot export: " .. outboxError) return false end
+
+  local sized, outboxSize = pcall(outbox.size)
+  local listed, outboxItems = pcall(outbox.list)
+  if not sized or type(outboxSize) ~= "number" or not listed or type(outboxItems) ~= "table" then print("Cannot export: could not read outbox contents") return false end
+  local targets, capacity = {}, 0
+  for slot = 1, outboxSize do
+    if not outboxItems[slot] then
+      local limited, slotLimit = pcall(outbox.getItemLimit, slot)
+      if not limited or type(slotLimit) ~= "number" then print("Cannot export: could not read outbox slot limit for slot " .. slot) return false end
+      local slotCapacity = math.min(slotLimit, item.maxCount)
+      if slotCapacity > 0 then
+        table.insert(targets, { slot = slot, capacity = slotCapacity })
+        capacity = capacity + slotCapacity
+      end
+    end
+  end
+  local amount = amountType == "all" and math.min(available, capacity)
+    or amountType == "count" and math.min(requested, available, capacity)
+    or math.min(item.maxCount, available, capacity)
+  if amount == 0 then print("Outbox has no empty slots; no items moved.") return false end
+
+  local state, transferred = { started = false }, 0
+  for _, destination in ipairs(targets) do
+    while amount > 0 and destination.capacity > 0 do
+      local source = storage.anyLocation(item.locations)
+      if not source then
+        print("Export stopped: selected item ran out unexpectedly")
+        index.trusted = false
+        return true
+      end
+      local record = index.inventories[source.name].slots[source.slot]
+      local limit = math.min(amount, destination.capacity, record.count)
+      local started, startError = beginTransfer(index, state, beforeMove)
+      if not started then print("Export stopped: " .. startError) return false end
+      local chest = peripheral.wrap(source.name)
+      local movedOk, moved = chest and pcall(chest.pushItems, storage.outboxName(), source.slot, limit, destination.slot)
+      if not movedOk or type(moved) ~= "number" or moved ~= limit then
+        print("Export stopped: outbox accepted fewer items than expected")
+        index.trusted = false
+        return true
+      end
+      local updated = moved == record.count and false or {
+        key = record.key, name = record.name, nbt = record.nbt,
+        displayName = record.displayName, count = record.count - moved, maxCount = record.maxCount,
+      }
+      storage.setSlot(index, source.name, source.slot, updated)
+      amount, destination.capacity, transferred = amount - moved, destination.capacity - moved, transferred + moved
+    end
+  end
+  print("Exported " .. transferred .. " x " .. displayName .. ".")
+  if (amountType == "count" and requested > available) or (amountType == "default" and item.maxCount > available) then print("The selected " .. displayName .. " ran out; no other matching items were used.") end
+  if (amountType == "count" and capacity < math.min(requested, available)) or (amountType == "default" and capacity < math.min(item.maxCount, available)) or (amountType == "all" and available > capacity) then print("Outbox had room for only " .. transferred .. " x " .. displayName .. ".") end
+  return state.started
+end
+
 return storage

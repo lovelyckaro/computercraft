@@ -82,4 +82,6 @@ the shared operation changed the index or its trust state.
 ### Milestone 3: In-Memory Import And Export
 
 Move `import` and `get` into service operations. Preserve current indexed slot
-updates and require reconciliation after an unclean shutdown.
+updates and require reconciliation after an unclean shutdown. Refactor the
+standalone executables into transaction wrappers around the shared operations,
+preserving their pre-transfer untrusted checkpoint and final save.

@@ -27,7 +27,7 @@ local function waitForNextPage()
 end
 
 local function help()
-  print("Commands: status, list [query], register, reconcile, help, exit")
+  print("Commands: status, list [query], register, reconcile, import, get <query> [count|all], help, exit")
 end
 
 if storage.serviceIsRunning() then
@@ -88,6 +88,10 @@ while not terminated do
         storage.register(index)
       elseif command == "reconcile" then
         storage.reconcile(index)
+      elseif command == "import" then
+        storage.import(index)
+      elseif command == "get" then
+        storage.get(index, arguments)
       elseif command == "help" then
         help()
       elseif command == "exit" then
