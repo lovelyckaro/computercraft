@@ -1,6 +1,6 @@
 local storage = {}
 
-local INDEX_VERSION = 1
+local INDEX_VERSION = 2
 local INBOX_NAME = "minecraft:barrel_0"
 local OUTBOX_NAME = "minecraft:barrel_1"
 local programDirectory = fs.getDir(shell.getRunningProgram())
@@ -67,56 +67,15 @@ function storage.newIndex()
   }
 end
 
-function storage.rebuildLookups(index)
-  local items = {}
-  local mergeTargets = {}
-  local emptySlots = {}
-
-  for name, inventory in pairs(index.inventories) do
-    local emptyCount = 0
-
-    for slot = 1, inventory.size do
-      local record = inventory.slots[slot]
-      local location = locationKey(name, slot)
-
-      if record == false then
-        emptyCount = emptyCount + 1
-        emptySlots[location] = true
-      else
-        local item = items[record.key]
-        if not item then
-          item = {
-            name = record.name,
-            nbt = record.nbt,
-            displayName = record.displayName,
-            maxCount = record.maxCount,
-            total = 0,
-            locations = {},
-          }
-          items[record.key] = item
-        end
-
-        item.total = item.total + record.count
-        item.locations[location] = record.count
-
-        local remaining = record.maxCount - record.count
-        if remaining > 0 then
-          local targets = mergeTargets[record.key] or {}
-          targets[location] = remaining
-          mergeTargets[record.key] = targets
-        end
-      end
-    end
-
-    inventory.emptyCount = emptyCount
-  end
-
-  index.items = items
-  index.mergeTargets = mergeTargets
-  index.emptySlots = emptySlots
+local function validIndex(index)
+  return type(index.trusted) == "boolean"
+    and type(index.inventories) == "table"
+    and type(index.items) == "table"
+    and type(index.mergeTargets) == "table"
+    and type(index.emptySlots) == "table"
 end
 
-local function readIndex(path)
+local function readIndex(path, allowLegacy)
   local handle, openError = fs.open(path, "r")
   if not handle then
     return nil, openError
@@ -130,11 +89,17 @@ local function readIndex(path)
     return nil, "index file is not valid serialized data"
   end
 
-  if index.version ~= INDEX_VERSION or type(index.trusted) ~= "boolean" or type(index.inventories) ~= "table" then
+  if index.version == 1 and allowLegacy and type(index.trusted) == "boolean" and type(index.inventories) == "table" then
+    return index
+  end
+
+  if index.version ~= INDEX_VERSION or not validIndex(index) then
+    if index.version == 1 then
+      return nil, "storage index version 1 requires reconcile"
+    end
     return nil, "index file has an unsupported format"
   end
 
-  storage.rebuildLookups(index)
   return index
 end
 
@@ -151,6 +116,21 @@ function storage.loadIndex()
   end
 
   return readIndex(indexPath)
+end
+
+function storage.loadIndexForReconcile()
+  if not fs.exists(indexPath) and fs.exists(backupPath) then
+    local restored, restoreError = pcall(fs.move, backupPath, indexPath)
+    if not restored then
+      return nil, "could not restore index backup: " .. tostring(restoreError)
+    end
+  end
+
+  if not fs.exists(indexPath) then
+    return nil, "storage index does not exist; run register first"
+  end
+
+  return readIndex(indexPath, true)
 end
 
 function storage.saveIndex(index)
@@ -268,9 +248,89 @@ function storage.scanChest(name)
   return inventory
 end
 
+local function addSlotLookup(index, name, slot, record)
+  local inventory = index.inventories[name]
+  local location = locationKey(name, slot)
+
+  if record == false then
+    inventory.emptyCount = inventory.emptyCount + 1
+    index.emptySlots[location] = true
+    return
+  end
+
+  local item = index.items[record.key]
+  if not item then
+    item = {
+      name = record.name,
+      nbt = record.nbt,
+      displayName = record.displayName,
+      maxCount = record.maxCount,
+      total = 0,
+      locations = {},
+    }
+    index.items[record.key] = item
+  end
+
+  item.total = item.total + record.count
+  item.locations[location] = record.count
+
+  local remaining = record.maxCount - record.count
+  if remaining > 0 then
+    local targets = index.mergeTargets[record.key] or {}
+    targets[location] = remaining
+    index.mergeTargets[record.key] = targets
+  end
+end
+
+local function removeSlotLookup(index, name, slot, record)
+  local inventory = index.inventories[name]
+  local location = locationKey(name, slot)
+
+  if record == false then
+    inventory.emptyCount = inventory.emptyCount - 1
+    index.emptySlots[location] = nil
+    return
+  end
+
+  local item = index.items[record.key]
+  item.total = item.total - record.count
+  item.locations[location] = nil
+  if item.total == 0 then
+    index.items[record.key] = nil
+  end
+
+  local targets = index.mergeTargets[record.key]
+  if targets then
+    targets[location] = nil
+    if not next(targets) then
+      index.mergeTargets[record.key] = nil
+    end
+  end
+end
+
+function storage.rebuildLookups(index)
+  index.items = {}
+  index.mergeTargets = {}
+  index.emptySlots = {}
+
+  for _, inventory in pairs(index.inventories) do
+    inventory.emptyCount = 0
+  end
+
+  for name, inventory in pairs(index.inventories) do
+    for slot = 1, inventory.size do
+      addSlotLookup(index, name, slot, inventory.slots[slot])
+    end
+  end
+end
+
 function storage.addInventory(index, name, inventory)
   index.inventories[name] = inventory
-  storage.rebuildLookups(index)
+  inventory.emptyCount = 0
+
+  for slot = 1, inventory.size do
+    addSlotLookup(index, name, slot, inventory.slots[slot])
+  end
 end
 
 function storage.registeredChests(index)
@@ -286,6 +346,7 @@ end
 
 function storage.replaceInventories(index, inventories)
   index.inventories = inventories
+  index.version = INDEX_VERSION
   storage.rebuildLookups(index)
 end
 
@@ -328,59 +389,11 @@ end
 
 function storage.setSlot(index, name, slot, record)
   local inventory = index.inventories[name]
-  local location = locationKey(name, slot)
   local previous = inventory.slots[slot]
 
-  if previous == false then
-    inventory.emptyCount = inventory.emptyCount - 1
-    index.emptySlots[location] = nil
-  else
-    local item = index.items[previous.key]
-    item.total = item.total - previous.count
-    item.locations[location] = nil
-    if item.total == 0 then
-      index.items[previous.key] = nil
-    end
-
-    local targets = index.mergeTargets[previous.key]
-    if targets then
-      targets[location] = nil
-      if not next(targets) then
-        index.mergeTargets[previous.key] = nil
-      end
-    end
-  end
-
+  removeSlotLookup(index, name, slot, previous)
   inventory.slots[slot] = record
-
-  if record == false then
-    inventory.emptyCount = inventory.emptyCount + 1
-    index.emptySlots[location] = true
-    return
-  end
-
-  local item = index.items[record.key]
-  if not item then
-    item = {
-      name = record.name,
-      nbt = record.nbt,
-      displayName = record.displayName,
-      maxCount = record.maxCount,
-      total = 0,
-      locations = {},
-    }
-    index.items[record.key] = item
-  end
-
-  item.total = item.total + record.count
-  item.locations[location] = record.count
-
-  local remaining = record.maxCount - record.count
-  if remaining > 0 then
-    local targets = index.mergeTargets[record.key] or {}
-    targets[location] = remaining
-    index.mergeTargets[record.key] = targets
-  end
+  addSlotLookup(index, name, slot, record)
 end
 
 function storage.searchItems(index, query)

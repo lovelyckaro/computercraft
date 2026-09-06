@@ -78,8 +78,9 @@ selected item runs out.
 
 The persisted index has a format version and a `trusted` flag. The flag is true
 only when every recorded change has been confirmed. The canonical inventory
-record is the physical layout and per-slot state; all other index tables are
-derived lookup tables that make normal operations fast.
+record is the physical layout and per-slot state; its catalog and capacity
+lookup tables are persisted alongside it and updated with every managed slot
+change. Normal commands do not rebuild these tables while loading the index.
 
 ### Inventory Records
 
@@ -160,14 +161,17 @@ emptySlots = {
 
 After each confirmed transfer, update the source and destination records in
 `inventories`, the affected `items` totals and locations, matching
-`mergeTargets`, and `emptySlots`. These targeted updates avoid full scans as
+`mergeTargets`, and `emptySlots`. Registering a new chest likewise adds each of
+its slots directly to those tables. These targeted updates avoid full scans as
 the pool grows. Before an item-moving command begins its first transfer, persist
 the index as untrusted. Keep its updates in memory, then atomically persist the
 completed trusted index when the command finishes. An interrupted command
 therefore requires `reconcile` without writing the complete index per transfer.
 
 `reconcile` rebuilds the canonical inventory records from the registered
-chests, then recreates the catalog and import lookup tables from those records.
+chests, then performs the sole full rebuild of the catalog and import lookup
+tables from those records. Version 1 indexes do not persist lookup tables and
+must be reconciled before normal commands can use them.
 
 ## Inventory Operations
 

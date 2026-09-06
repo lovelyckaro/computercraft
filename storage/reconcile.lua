@@ -1,6 +1,6 @@
 local storage = require("storage")
 
-local index, loadError = storage.loadIndex()
+local index, loadError = storage.loadIndexForReconcile()
 if not index then
   print("Could not load storage index: " .. loadError)
   print("Restore a valid index backup, or remove the invalid index and run register.")
