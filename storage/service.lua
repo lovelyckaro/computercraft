@@ -42,7 +42,7 @@ if not index then
   return
 end
 
-local started, startError = storage.startService()
+local started, startError = storage.acquireServiceLock()
 if not started then
   print("Could not start storage service: " .. startError)
   return
@@ -99,7 +99,7 @@ while not terminated do
         if not saved then
           print("Could not checkpoint storage index: " .. saveError)
         else
-          local stopped, stopError = storage.stopService()
+          local stopped, stopError = storage.releaseServiceLock()
           if not stopped then
             print("Could not remove service marker: " .. stopError)
           else

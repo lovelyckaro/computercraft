@@ -1,4 +1,70 @@
+--- Storage module.
+-- Functions needed by storage service for handling index, inventories, inbox, outbox etc.
+-- @module storage
 local storage = {}
+
+--- Type definitions for storage module
+
+--- Unique key for an item, which is a combination of the item name and its NBT data (if any).
+---@alias ItemKey string
+
+--- Unique key for an inventory, which is the same as the peripheral name.
+--- @alias InventoryName string
+
+--- Unique key for a location, which is a combination of the inventory name and the slot number.
+---@alias LocationKey string
+
+--- Information about an item in an inventory, as returned by peripheral.getItemDetail().
+--- @class Item
+--- @field name string
+--- @field nbt string|nil
+--- @field count integer
+--- @field displayName string?
+--- @field maxCount integer?
+
+---@alias ItemDetail Item
+
+---@class InventoryPeripheral
+---@field size fun(): integer
+---@field list fun(): table<integer, Item>
+---@field getItemDetail fun(slot: integer, detailed: boolean?): ItemDetail?
+---@field getItemLimit fun(slot: integer): integer
+---@field pushItems fun(toName: string, fromSlot: integer, limit: integer?, toSlot: integer?): integer
+---@field pullItems fun(fromName: string, fromSlot: integer, limit: integer?, toSlot: integer?): integer
+
+--- Information kept for each item in the index.
+---@class ItemRecord
+---@field name string
+---@field nbt string?
+---@field maxCount integer
+---@field total integer
+---@field locations table<LocationKey, number>
+
+--- Information kept for each slot in an inventory
+---@class SlotRecord
+---@field key ItemKey
+---@field name string
+---@field count integer
+---@field displayName string
+---@field nbt string|nil
+---@field maxCount integer
+
+--- Information kept for each registered inventory
+---@class InventoryRecord
+---@field size integer
+---@field emptyCount integer
+---@field slots table<number, SlotRecord|false>
+
+--- Main storage index structure, which contains all the information about registered inventories and items. As well as tables for efficient lookup of items.
+---@class Index
+---@field version number
+---@field trusted boolean
+---@field inventories table<InventoryName, InventoryRecord>
+---@field items table<ItemKey, ItemRecord>
+---@field mergeTargets table<ItemKey, table<LocationKey, number>>
+---@field emptySlots table<LocationKey, boolean>
+
+-- end of type definitions
 
 local INDEX_VERSION = 2
 local INBOX_NAME = "minecraft:barrel_0"
@@ -9,25 +75,40 @@ local backupPath = indexPath .. ".bak"
 local temporaryPath = indexPath .. ".tmp"
 local serviceMarkerPath = fs.combine(programDirectory, "service.running")
 
+--- Create location key
+--- @param name InventoryName
+--- @param slot number
+--- @return LocationKey
 local function locationKey(name, slot)
   return name .. ":" .. slot
 end
 
+--- Create item key
+--- @param item Item
+--- @return ItemKey
 function storage.itemKey(item)
   return item.name .. "#" .. (item.nbt or "")
 end
 
-function storage.slotRecord(item, detail, count)
+---Create a slot record
+---@param detail ItemDetail The item details for the slot.
+---@param count number? The number of items in the slot, if different from the item details.
+---@return SlotRecord
+function storage.slotRecord(detail, count)
   return {
-    key = storage.itemKey(item),
-    name = item.name,
-    nbt = item.nbt,
+    key = storage.itemKey(detail),
+    name = detail.name,
+    nbt = detail.nbt,
     displayName = detail.displayName,
-    count = count or item.count,
+    count = count or detail.count,
     maxCount = detail.maxCount,
   }
 end
 
+--- Get an inventory with the expected name and label
+--- @param name InventoryName
+--- @param label string
+--- @return InventoryPeripheral? peripheral, string? error message.
 local function roleInventory(name, label)
   if not peripheral.isPresent(name) then
     return nil, label .. " barrel is not connected: " .. name
@@ -45,18 +126,26 @@ local function roleInventory(name, label)
   return inventory
 end
 
+--- Get the inbox inventory peripheral
+--- @return InventoryPeripheral? peripheral, string? error message.
 function storage.getInbox()
   return roleInventory(INBOX_NAME, "inbox")
 end
 
+--- Get the outbox inventory peripheral
+--- @return InventoryPeripheral? peripheral, string? error message.
 function storage.getOutbox()
   return roleInventory(OUTBOX_NAME, "outbox")
 end
 
+--- Get the name of the outbox inventory peripheral
+--- @return InventoryName
 function storage.outboxName()
   return OUTBOX_NAME
 end
 
+--- Creates a new, empty storage index
+--- @return Index index
 function storage.newIndex()
   return {
     version = INDEX_VERSION,
@@ -68,6 +157,9 @@ function storage.newIndex()
   }
 end
 
+--- Validate the structure of a storage index
+--- @param index Index
+--- @return boolean valid
 local function validIndex(index)
   return type(index.trusted) == "boolean"
     and type(index.inventories) == "table"
@@ -76,7 +168,10 @@ local function validIndex(index)
     and type(index.emptySlots) == "table"
 end
 
-local function readIndex(path, allowLegacy)
+--- Read an index from disk
+--- @param path string
+--- @return Index? index, string? error
+local function readIndex(path)
   local handle, openError = fs.open(path, "r")
   if not handle then
     return nil, openError
@@ -86,24 +181,16 @@ local function readIndex(path, allowLegacy)
   handle.close()
 
   local index = textutils.unserialize(contents)
-  if type(index) ~= "table" then
-    return nil, "index file is not valid serialized data"
-  end
 
-  if index.version == 1 and allowLegacy and type(index.trusted) == "boolean" and type(index.inventories) == "table" then
-    return index
-  end
-
-  if index.version ~= INDEX_VERSION or not validIndex(index) then
-    if index.version == 1 then
-      return nil, "storage index version 1 requires reconcile"
-    end
-    return nil, "index file has an unsupported format"
+  if not validIndex(index) 
+    then return nil, "index file is not valid serialized data" 
   end
 
   return index
 end
 
+--- Load the storage index from disk, restoring from backup if necessary, or creating a new index if none exists
+--- @return Index? index, string? error
 function storage.loadIndex()
   if not fs.exists(indexPath) and fs.exists(backupPath) then
     local restored, restoreError = pcall(fs.move, backupPath, indexPath)
@@ -119,21 +206,9 @@ function storage.loadIndex()
   return readIndex(indexPath)
 end
 
-function storage.loadIndexForReconcile()
-  if not fs.exists(indexPath) and fs.exists(backupPath) then
-    local restored, restoreError = pcall(fs.move, backupPath, indexPath)
-    if not restored then
-      return nil, "could not restore index backup: " .. tostring(restoreError)
-    end
-  end
-
-  if not fs.exists(indexPath) then
-    return nil, "storage index does not exist; run register first"
-  end
-
-  return readIndex(indexPath, true)
-end
-
+--- Store index to disk
+--- @param index Index
+--- @return boolean? success, string? error
 function storage.saveIndex(index)
   local handle, openError = fs.open(temporaryPath, "w")
   if not handle then
@@ -170,11 +245,15 @@ function storage.saveIndex(index)
   return true
 end
 
+--- Determine if the service is running by checking for the presence of the service marker file
+--- @return boolean running
 function storage.serviceIsRunning()
   return fs.exists(serviceMarkerPath)
 end
 
-function storage.startService()
+--- Acquire a lock to indicate that no other storage service is running
+--- @return boolean? success, string? error
+function storage.acquireServiceLock()
   if storage.serviceIsRunning() then
     return nil, "storage service is already running or stopped uncleanly"
   end
@@ -187,7 +266,9 @@ function storage.startService()
   return true
 end
 
-function storage.stopService()
+--- Release the lock indicating that the storage service is no longer running
+--- @return boolean? success, string? error
+function storage.releaseServiceLock()
   if fs.exists(serviceMarkerPath) then
     fs.delete(serviceMarkerPath)
   end
@@ -214,12 +295,16 @@ function storage.completeTransaction(index)
   return storage.saveIndex(index)
 end
 
+--- Determine if a chest peripheral is connected with the given name
+--- @param name InventoryName
+--- @return boolean isChest
 function storage.isChest(name)
-  return name ~= "left" and name ~= "right"
-    and peripheral.isPresent(name)
-    and peripheral.hasType(name, "minecraft:chest")
+  return peripheral.isPresent(name) and peripheral.hasType(name, "minecraft:chest")
 end
 
+--- Discover all un-indexed chests connected to the computer
+--- @param index Index
+--- @return InventoryName[] names
 function storage.discoverChests(index)
   local names = {}
 
@@ -229,7 +314,6 @@ function storage.discoverChests(index)
     end
   end
 
-  table.sort(names)
   return names
 end
 
@@ -270,7 +354,7 @@ function storage.scanChest(name)
         return nil, "could not read item details for " .. name .. " slot " .. slot
       end
 
-      inventory.slots[slot] = storage.slotRecord(basic, detail)
+      inventory.slots[slot] = storage.slotRecord(detail)
     end
   end
 
@@ -311,6 +395,11 @@ local function addSlotLookup(index, name, slot, record)
   end
 end
 
+---comment
+---@param index Index
+---@param name InventoryName
+---@param slot number
+---@param record SlotRecord|false
 local function removeSlotLookup(index, name, slot, record)
   local inventory = index.inventories[name]
   local location = locationKey(name, slot)
@@ -337,6 +426,8 @@ local function removeSlotLookup(index, name, slot, record)
   end
 end
 
+--- Recalculate all lookup tables in an index
+--- @param index Index
 function storage.rebuildLookups(index)
   index.items = {}
   index.mergeTargets = {}
@@ -478,6 +569,11 @@ function storage.anyLocation(locations)
   }
 end
 
+---comment
+---@param index Index
+---@param name InventoryName
+---@param slot number
+---@param record SlotRecord
 function storage.setSlot(index, name, slot, record)
   local inventory = index.inventories[name]
   local previous = inventory.slots[slot]
@@ -487,6 +583,10 @@ function storage.setSlot(index, name, slot, record)
   addSlotLookup(index, name, slot, record)
 end
 
+--- Seearch function used in list/get. Sorts results in descending order of indexed counts.
+--- @param index Index
+--- @param query string
+--- @return ItemRecord[] results
 function storage.searchItems(index, query)
   local results = {}
   local normalizedQuery = query:lower()
@@ -740,7 +840,7 @@ function storage.import(index, beforeMove)
       return nil, "selected destination " .. destination.name .. " slot " .. destination.slot .. " accepted no items"
     end
     local previous = index.inventories[destination.name].slots[destination.slot]
-    local record = previous == false and storage.slotRecord(item, item, moved) or {
+    local record = previous == false and storage.slotRecord(item, moved) or {
       key = previous.key, name = previous.name, nbt = previous.nbt,
       displayName = previous.displayName, count = previous.count + moved, maxCount = previous.maxCount,
     }
@@ -790,8 +890,9 @@ function storage.import(index, beforeMove)
   return state.started
 end
 
-function storage.get(index, arguments, beforeMove)
-  if #arguments == 0 then print("Usage: get <query> [count|all]") return false end
+local function parseGet(arguments)
+  local usageHint = "Usage: get <item name> [count|all]"
+  if #arguments == 0 then error(usageHint) end
   local amountType, requested = "default", nil
   if #arguments > 1 then
     local last = arguments[#arguments]
@@ -800,40 +901,44 @@ function storage.get(index, arguments, beforeMove)
       table.remove(arguments)
     elseif tonumber(last) ~= nil then
       if not last:match("^%d+$") or tonumber(last) < 1 then
-        print("Count must be a positive whole number or all.")
-        return false
+        error("Count must be a positive whole number or all.")
       end
       amountType, requested = "count", tonumber(last)
       table.remove(arguments)
     end
   end
   local query = table.concat(arguments, " ")
-  if query == "" then print("Usage: get <query> [count|all]") return false end
-  if not index.trusted then print("Storage index is untrusted. Run reconcile before exporting items.") return false end
+  if query == "" then error(usageHint) end
+  return query, amountType, requested
+end
+
+--- Determine the top matched item in a get/list style query
+--- @param index Index
+--- @param query string
+--- @return ItemRecord
+local function selectGetItem(index, query)
   local matches = storage.searchItems(index, query)
-  if #matches == 0 then print("No matching items for " .. query .. ".") return false end
+  if #matches == 0 then error("No matching items for " .. query .. ".") end
   local item = matches[1]
   local displayName, available = item.displayName or item.name, item.total
-  if #matches > 1 then print("Selected " .. displayName .. " with " .. available .. " items available.") end
-  local connected, missing = storage.validateRegisteredChests(index)
-  if not connected then
-    print("Cannot export while registered chests are missing:")
-    for _, name in ipairs(missing) do print("  " .. name) end
-    return false
-  end
-  local _, inboxError = storage.getInbox()
-  if inboxError then print("Cannot export: " .. inboxError) return false end
-  local outbox, outboxError = storage.getOutbox()
-  if not outbox then print("Cannot export: " .. outboxError) return false end
 
+  if #matches > 1 then print("Multiple matches found for " .. query .. ", selected " .. displayName) end
+  return item
+end
+
+--- comment
+--- @param outbox InventoryPeripheral
+--- @param item Item
+--- @return number capacity, integer[] targets
+local function outboxTargets(outbox, item)
   local sized, outboxSize = pcall(outbox.size)
   local listed, outboxItems = pcall(outbox.list)
-  if not sized or type(outboxSize) ~= "number" or not listed or type(outboxItems) ~= "table" then print("Cannot export: could not read outbox contents") return false end
+  if not sized or type(outboxSize) ~= "number" or not listed or type(outboxItems) ~= "table" then error("Cannot export: could not read outbox contents") end
   local targets, capacity = {}, 0
   for slot = 1, outboxSize do
     if not outboxItems[slot] then
       local limited, slotLimit = pcall(outbox.getItemLimit, slot)
-      if not limited or type(slotLimit) ~= "number" then print("Cannot export: could not read outbox slot limit for slot " .. slot) return false end
+      if not limited or type(slotLimit) ~= "number" then error("Cannot export: could not read outbox slot limit for slot " .. slot) end
       local slotCapacity = math.min(slotLimit, item.maxCount)
       if slotCapacity > 0 then
         table.insert(targets, { slot = slot, capacity = slotCapacity })
@@ -841,6 +946,36 @@ function storage.get(index, arguments, beforeMove)
       end
     end
   end
+  return capacity, targets
+end
+
+--- Move items from the storage to the outbox. Accepts arguments like "get query 32", "get query" or "get query all", where query supports the same matching rules as list. The item returned is the top hit from query.
+---@param index Index
+---@param arguments string[]
+---@param beforeMove function
+---@return boolean
+function storage.get(index, arguments, beforeMove)
+
+  local parseOk, query, amountType, requested = pcall(parseGet, arguments)
+  if not parseOk or requested == nil then print(query) return false end
+  if not index.trusted then print("Storage index is untrusted. Run reconcile before exporting items.") return false end
+  local selectOk, item = pcall(selectGetItem, index, query)
+  if not selectOk then print(item) return false end
+  local available, displayName = item.total, item.displayName or item.name
+
+  local connected, missing = storage.validateRegisteredChests(index)
+  if not connected and missing ~= nil then
+    print("Cannot export while registered chests are missing:")
+    for _, name in ipairs(missing) do print("  " .. name) end
+    return false
+  end
+  
+  local outbox, outboxError = storage.getOutbox()
+  if not outbox then print("Cannot export: " .. outboxError) return false end
+
+  local targetsFound, capacity, targets = pcall(outboxTargets, outbox, item)
+  if not targetsFound then print("Cannot export: " .. capacity) return false end
+
   local amount = amountType == "all" and math.min(available, capacity)
     or amountType == "count" and math.min(requested, available, capacity)
     or math.min(item.maxCount, available, capacity)
@@ -859,8 +994,7 @@ function storage.get(index, arguments, beforeMove)
       local limit = math.min(amount, destination.capacity, record.count)
       local started, startError = beginTransfer(index, state, beforeMove)
       if not started then print("Export stopped: " .. startError) return false end
-      local chest = peripheral.wrap(source.name)
-      local movedOk, moved = chest and pcall(chest.pushItems, storage.outboxName(), source.slot, limit, destination.slot)
+      local movedOk, moved = pcall(outbox.pullItems, source.name, source.slot, limit, destination.slot)
       if not movedOk or type(moved) ~= "number" or moved ~= limit then
         print("Export stopped: outbox accepted fewer items than expected")
         index.trusted = false
