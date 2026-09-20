@@ -975,23 +975,20 @@ function storage.get(index, arguments)
 
   local state, transferred = { started = false }, 0
   for _, destination in ipairs(targets) do
-    while amount > 0 do
-      local source = storage.anyLocation(item.locations)
-      if not source then
-        print("Export stopped: selected item ran out unexpectedly")
-        index.trusted = false
-        return true
-      end
+    for source, sourceAmount in pairs(item.locations) do
+      if amount <= 0 then break end
       print("Fetching item from inventory: " .. source.name .. ", slot: " .. source.slot)
       local record = index.inventories[source.name].slots[source.slot]
+      if not record then 
+        print("Export stopped: source slot is empty or does not exist")
+        return true
+      end
       local limit = math.min(amount, destination.capacity, record.count)
-      --local started, startError = beginTransfer(index, state, beforeMove)
-      --if not started then print("Export stopped: " .. startError) return false end
       local movedOk, moved = pcall(outbox.pullItems, source.name, source.slot, limit, destination.slot)
       if not movedOk or type(moved) ~= "number" or moved ~= limit then
-        print("Export stopped: outbox accepted fewer items than expected")
-        index.trusted = false
-        return true
+          print("Export stopped: outbox accepted fewer items than expected")
+          index.trusted = false
+          return true
       end
       local updated = moved == record.count and false or {
         key = record.key, name = record.name, nbt = record.nbt,
