@@ -952,23 +952,15 @@ end
 --- Move items from the storage to the outbox. Accepts arguments like "get query 32", "get query" or "get query all", where query supports the same matching rules as list. The item returned is the top hit from query.
 ---@param index Index
 ---@param arguments string[]
----@param beforeMove function
 ---@return boolean
-function storage.get(index, arguments, beforeMove)
+function storage.get(index, arguments)
 
   local parseOk, query, amountType, requested = pcall(parseGet, arguments)
   if not parseOk or requested == nil then print(query) return false end
   if not index.trusted then print("Storage index is untrusted. Run reconcile before exporting items.") return false end
   local selectOk, item = pcall(selectGetItem, index, query)
   if not selectOk then print(item) return false end
-  local available, displayName = item.total, item.displayName or item.name
-
-  local connected, missing = storage.validateRegisteredChests(index)
-  if not connected and missing ~= nil then
-    print("Cannot export while registered chests are missing:")
-    for _, name in ipairs(missing) do print("  " .. name) end
-    return false
-  end
+  local available, displayName = item.total, item.displayName
   
   local outbox, outboxError = storage.getOutbox()
   if not outbox then print("Cannot export: " .. outboxError) return false end
@@ -983,7 +975,7 @@ function storage.get(index, arguments, beforeMove)
 
   local state, transferred = { started = false }, 0
   for _, destination in ipairs(targets) do
-    while amount > 0 and destination.capacity > 0 do
+    while amount > 0 do
       local source = storage.anyLocation(item.locations)
       if not source then
         print("Export stopped: selected item ran out unexpectedly")
@@ -992,8 +984,8 @@ function storage.get(index, arguments, beforeMove)
       end
       local record = index.inventories[source.name].slots[source.slot]
       local limit = math.min(amount, destination.capacity, record.count)
-      local started, startError = beginTransfer(index, state, beforeMove)
-      if not started then print("Export stopped: " .. startError) return false end
+      --local started, startError = beginTransfer(index, state, beforeMove)
+      --if not started then print("Export stopped: " .. startError) return false end
       local movedOk, moved = pcall(outbox.pullItems, source.name, source.slot, limit, destination.slot)
       if not movedOk or type(moved) ~= "number" or moved ~= limit then
         print("Export stopped: outbox accepted fewer items than expected")
@@ -1005,6 +997,7 @@ function storage.get(index, arguments, beforeMove)
         displayName = record.displayName, count = record.count - moved, maxCount = record.maxCount,
       }
       storage.setSlot(index, source.name, source.slot, updated)
+      item = updated
       amount, destination.capacity, transferred = amount - moved, destination.capacity - moved, transferred + moved
     end
   end
