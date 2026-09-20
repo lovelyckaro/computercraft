@@ -982,6 +982,7 @@ function storage.get(index, arguments)
         index.trusted = false
         return true
       end
+      print("Fetching item from inventory: " .. source.name .. ", slot: " .. source.slot)
       local record = index.inventories[source.name].slots[source.slot]
       local limit = math.min(amount, destination.capacity, record.count)
       --local started, startError = beginTransfer(index, state, beforeMove)
@@ -997,7 +998,6 @@ function storage.get(index, arguments)
         displayName = record.displayName, count = record.count - moved, maxCount = record.maxCount,
       }
       storage.setSlot(index, source.name, source.slot, updated)
-      item = updated
       amount, destination.capacity, transferred = amount - moved, destination.capacity - moved, transferred + moved
     end
   end
