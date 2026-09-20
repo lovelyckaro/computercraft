@@ -975,16 +975,17 @@ function storage.get(index, arguments)
 
   local state, transferred = { started = false }, 0
   for _, destination in ipairs(targets) do
-    for source, sourceAmount in pairs(item.locations) do
+    for source, _ in pairs(item.locations) do
+      local name, slot = source:match("^(.*):(%d+)$")
       if amount <= 0 then break end
-      print("Fetching item from inventory: " .. source.name .. ", slot: " .. source.slot)
-      local record = index.inventories[source.name].slots[source.slot]
+      print("Fetching item from inventory: " .. name .. ", slot: " .. slot)
+      local record = index.inventories[name].slots[tonumber(slot)]
       if not record then 
         print("Export stopped: source slot is empty or does not exist")
         return true
       end
       local limit = math.min(amount, destination.capacity, record.count)
-      local movedOk, moved = pcall(outbox.pullItems, source.name, source.slot, limit, destination.slot)
+      local movedOk, moved = pcall(outbox.pullItems, name, tonumber(slot), limit, destination.slot)
       if not movedOk or type(moved) ~= "number" or moved ~= limit then
           print("Export stopped: outbox accepted fewer items than expected")
           index.trusted = false
@@ -994,7 +995,7 @@ function storage.get(index, arguments)
         key = record.key, name = record.name, nbt = record.nbt,
         displayName = record.displayName, count = record.count - moved, maxCount = record.maxCount,
       }
-      storage.setSlot(index, source.name, source.slot, updated)
+      storage.setSlot(index, name, tonumber(slot), updated)
       amount, destination.capacity, transferred = amount - moved, destination.capacity - moved, transferred + moved
     end
   end
